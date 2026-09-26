@@ -12,6 +12,7 @@
       <p>
         改接后为相互干扰的读出通道分配最少频段。求解在浏览器 Worker 中以确定性
         DSATUR 分支定界完成，结合可行上界与可证明下界剪枝，精确判定色数。
+        取得结论后可发起复线审计：以受限颜色分支定界精确求出降至目标频段数所需解除的最少干扰关系。
       </p>
     </header>
     <main>
@@ -51,6 +52,37 @@ CH1 CH3</textarea>
         <h3>频段清单</h3>
         <ul id="bands"></ul>
         <p id="verification"></p>
+
+        <section id="auditPanel" class="audit">
+          <h3>复线审计</h3>
+          <p class="muted-text">
+            在上述结论上填写更少的目标频段数并发起复线审计：精确确认最少需要解除哪些现有干扰关系，
+            剩余网络即可按目标频段运行。
+          </p>
+          <label for="auditTarget">目标频段数（不小于 1 且小于当前 χ 的整数）</label>
+          <div class="actions">
+            <input id="auditTarget" type="text" inputmode="numeric" placeholder="例如 2" />
+            <button id="auditLaunch" type="button" disabled>发起复线审计</button>
+            <button id="auditCancel" type="button" disabled>取消审计</button>
+          </div>
+          <p id="auditStatus" role="status"></p>
+          <ul id="auditErrors" class="errors"></ul>
+          <div id="auditResult" hidden>
+            <p id="auditSummary" class="summary"></p>
+            <h4>解除关系（按端点标识规范排序）</h4>
+            <ul id="removedList"></ul>
+            <h4>剩余关系的规范频段编号（按通道标识稳定裁决）</h4>
+            <table id="auditAssignment">
+              <thead>
+                <tr><th>通道</th><th>频段</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <h4>逐频段通道清单</h4>
+            <ul id="auditBands"></ul>
+            <p id="auditVerification"></p>
+          </div>
+        </section>
       </section>
     </main>
     <script src="validate.js"></script>

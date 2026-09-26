@@ -81,9 +81,40 @@
     return { edges: edges, errors: errors };
   }
 
+  /*
+   * 复线审计目标频段数校验。
+   * chi：既有求色结论的最少频段数；edgeCount：当前网络的干扰关系条数。
+   * 三类拒绝（均须定位反馈并清除本次审计证据）：
+   *  - 格式非法：不是不小于 1 的整数；
+   *  - 不存在可保留关系：当前网络没有任何干扰关系可供保留 / 解除；
+   *  - 目标频段不小于原最少数：复线审计要求严格更少的目标频段。
+   */
+  function parseAuditTarget(text, chi, edgeCount) {
+    var errors = [];
+    var raw = String(text == null ? '' : text).trim();
+    var target = null;
+    if (!/^[1-9]\d*$/.test(raw)) {
+      errors.push({
+        message: '目标频段数「' + (raw === '' ? '（空）' : raw) + '」格式非法：应为不小于 1 的整数。',
+      });
+    } else {
+      target = parseInt(raw, 10);
+      if (edgeCount === 0) {
+        errors.push({ message: '当前网络不存在可保留的干扰关系，无法发起复线审计。' });
+      } else if (target >= chi) {
+        errors.push({
+          message:
+            '目标频段数 ' + target + ' 不小于原最少频段数 χ = ' + chi + '：复线审计要求严格更少的目标频段。',
+        });
+      }
+    }
+    return { ok: errors.length === 0, target: target, errors: errors };
+  }
+
   return {
     parseChannels: parseChannels,
     parseEdges: parseEdges,
+    parseAuditTarget: parseAuditTarget,
     MIN_CHANNELS: MIN_CHANNELS,
     MAX_CHANNELS: MAX_CHANNELS,
     MAX_EDGES: MAX_EDGES,
