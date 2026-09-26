@@ -81,9 +81,41 @@
     return { edges: edges, errors: errors };
   }
 
+  /*
+   * 复线审计目标校验：目标频段数必须为正整数、存在可保留的干扰关系、
+   * 且严格小于原最少频段数 χ。任一不满足即定位反馈（页面据此清除本次审计证据）。
+   */
+  function parseAuditTarget(text, chi, edgeCount) {
+    var errors = [];
+    var raw = String(text == null ? '' : text).trim();
+    var target = null;
+    if (!/^\d+$/.test(raw)) {
+      errors.push({ message: '目标频段数「' + (raw === '' ? '（空）' : raw) + '」格式非法：请输入正整数。' });
+    } else {
+      target = parseInt(raw, 10);
+      if (target < 1) {
+        errors.push({ message: '目标频段数「' + raw + '」格式非法：必须为正整数。' });
+        target = null;
+      }
+    }
+    if (target !== null) {
+      if (edgeCount === 0) {
+        errors.push({ message: '不存在可保留的干扰关系：当前网络没有任何干扰关系，复线审计无从发起。' });
+        target = null;
+      } else if (target >= chi) {
+        errors.push({
+          message: '目标频段数 ' + target + ' 不小于原最少频段数 χ=' + chi + '：复线审计要求目标频段数严格更少。',
+        });
+        target = null;
+      }
+    }
+    return { target: target, errors: errors };
+  }
+
   return {
     parseChannels: parseChannels,
     parseEdges: parseEdges,
+    parseAuditTarget: parseAuditTarget,
     MIN_CHANNELS: MIN_CHANNELS,
     MAX_CHANNELS: MAX_CHANNELS,
     MAX_EDGES: MAX_EDGES,

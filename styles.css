@@ -51,6 +51,19 @@ textarea {
   border: 1px solid #c4cdd8;
   border-radius: 6px;
 }
+input[type="text"] {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #c4cdd8;
+  border-radius: 6px;
+  width: 12rem;
+}
+.hint {
+  color: #667085;
+  font-size: 0.9rem;
+  margin: 0.3rem 0;
+}
 .actions {
   display: flex;
   align-items: center;
@@ -77,20 +90,25 @@ button:disabled {
   background: #fff;
   color: #16324f;
 }
-#status {
+#status,
+#auditStatus {
   min-height: 1.2em;
   margin: 0.5rem 0 0;
 }
-#status.error {
+#status.error,
+#auditStatus.error {
   color: #b3261e;
 }
-#status.busy {
+#status.busy,
+#auditStatus.busy {
   color: #0b5cad;
 }
-#status.ok {
+#status.ok,
+#auditStatus.ok {
   color: #146c2e;
 }
-#status.muted {
+#status.muted,
+#auditStatus.muted {
   color: #667085;
 }
 .errors {

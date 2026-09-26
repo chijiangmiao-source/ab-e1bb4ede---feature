@@ -109,6 +109,40 @@ function bruteChi(n, pairs) {
   return n;
 }
 
+// 测试专用暴力最小同频边数（仅用于交叉验证，不属于产品代码）
+function bruteMinConflicts(n, pairs, k) {
+  const nbr = Array.from({ length: n }, () => []);
+  for (const [a, b] of pairs) {
+    nbr[a].push(b);
+    nbr[b].push(a);
+  }
+  const color = new Array(n).fill(-1);
+  let best = Infinity;
+  function rec(v, cost) {
+    if (cost >= best) return;
+    if (v === n) {
+      best = cost;
+      return;
+    }
+    for (let c = 0; c < k; c++) {
+      let add = 0;
+      for (const u of nbr[v]) {
+        if (color[u] === c) add++;
+      }
+      color[v] = c;
+      rec(v + 1, cost + add);
+      color[v] = -1;
+    }
+  }
+  rec(0, 0);
+  return best;
+}
+
+// 无向关系规范化（端点按标识升序）
+function normPair(a, b) {
+  return a < b ? [a, b] : [b, a];
+}
+
 /* ---------- 1. 代码测试：DSATUR 精确求解 ---------- */
 
 test('三角冲突需要 3 个频段', () => {
@@ -293,6 +327,198 @@ test('干扰关系行格式错误被定位提示', () => {
   assert.match(r.errors[0].message, /恰好两个/);
 });
 
+/* ---------- 2b. 代码测试：复线审计（受限颜色分支定界） ---------- */
+
+test('复线审计：三角网络降至二频段时解除一条关系', () => {
+  const ids = ['CH1', 'CH2', 'CH3'];
+  const pairs = [['CH1', 'CH2'], ['CH2', 'CH3'], ['CH1', 'CH3']];
+  const r = DSATUR.auditGraph(ids, pairs, 2);
+  assert.strictEqual(r.removedCount, 1, '最少解除数应为 1');
+  assert.deepStrictEqual(r.removed, [['CH1', 'CH3']], '解除关系应为规范排序的 CH1 — CH3');
+  assert.strictEqual(r.kept, 2);
+  assert.strictEqual(r.total, 3);
+  assert.deepStrictEqual(r.bands, [['CH1', 'CH3'], ['CH2']], '剩余网络频段清单不符');
+  // 必然冲突下界（团）= 已知方案上界 = 1：无需分支即得证
+  assert.strictEqual(r.lb, 1);
+  assert.strictEqual(r.ub, 1);
+  // 可复算：解除集恰为同频干扰边，剩余关系两端分属不同频段
+  const removedKeys = new Set(r.removed.map((p) => JSON.stringify(p)));
+  const remaining = pairs.filter(([a, b]) => !removedKeys.has(JSON.stringify(normPair(a, b))));
+  assert.strictEqual(remaining.length, r.kept);
+  assert.strictEqual(DSATUR.verifyAssignment(remaining, r.bandOf).length, 0);
+  const mono = pairs.filter(([a, b]) => r.bandOf[a] === r.bandOf[b]).map(([a, b]) => normPair(a, b));
+  assert.deepStrictEqual(mono, r.removed);
+});
+
+test('复线审计：四通道完全冲突降至三频段时的稳定最小见证', () => {
+  const ids = ['C1', 'C2', 'C3', 'C4'];
+  const pairs = [];
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) pairs.push([ids[i], ids[j]]);
+  }
+  const r = DSATUR.auditGraph(ids, pairs, 3);
+  assert.strictEqual(r.removedCount, 1, 'K4 降至三频段的最少解除数应为 1');
+  assert.deepStrictEqual(r.removed, [['C1', 'C4']], '最小见证应为规范裁决的 C1 — C4');
+  assert.deepStrictEqual(r.bands, [['C1', 'C4'], ['C2'], ['C3']], '剩余网络频段清单不符');
+  assert.deepStrictEqual(r.bandOf, { C1: 1, C2: 2, C3: 3, C4: 1 });
+  assert.strictEqual(r.lb, 1, '互不重叠团导出的必然冲突下界应为 1');
+  assert.strictEqual(r.ub, 1, '已知方案上界应为 1');
+  // 稳定性：任意重排录入（通道顺序 / 边顺序 / 端点方向）见证保持一致
+  const rand = lcg(20260927);
+  for (let t = 0; t < 12; t++) {
+    const [ids2, pairs2] = reorder(ids, pairs, rand);
+    const r2 = DSATUR.auditGraph(ids2, pairs2, 3);
+    assert.deepStrictEqual(r2.removed, r.removed, '重排后解除关系改变');
+    assert.deepStrictEqual(r2.bandOf, r.bandOf, '重排后规范频段编号改变');
+    assert.deepStrictEqual(r2.bands, r.bands, '重排后频段清单改变');
+  }
+});
+
+test('复线审计：不降低频段数时拒绝审计并保持原结论可用', () => {
+  const ids = ['CH1', 'CH2', 'CH3'];
+  const pairs = [['CH1', 'CH2'], ['CH2', 'CH3'], ['CH1', 'CH3']];
+  const conclusion = DSATUR.solveGraph(ids, pairs); // 原求色结论 χ = 3
+  assert.strictEqual(conclusion.k, 3);
+  // 目标频段数等于或大于原最少数：拒绝并定位反馈
+  for (const text of ['3', '4', '10']) {
+    const r = Validate.parseAuditTarget(text, conclusion.k, pairs.length);
+    assert.strictEqual(r.target, null);
+    assert.ok(r.errors.some((e) => /不小于原最少频段数/.test(e.message)), `目标 ${text} 应被拒绝`);
+  }
+  // 原结论保持可用：拒绝审计不影响既有求色结论，复核依旧通过
+  assert.strictEqual(conclusion.k, 3);
+  assert.deepStrictEqual(conclusion.bands, [['CH1'], ['CH2'], ['CH3']]);
+  assert.strictEqual(DSATUR.verifyAssignment(pairs, conclusion.bandOf).length, 0);
+});
+
+test('复线审计：目标格式非法被定位反馈', () => {
+  for (const text of ['', '   ', 'abc', '1.5', '-2', '2x', '0']) {
+    const r = Validate.parseAuditTarget(text, 3, 5);
+    assert.strictEqual(r.target, null, `「${text}」应被拒绝`);
+    assert.ok(r.errors.some((e) => /格式非法/.test(e.message)), `「${text}」应提示格式非法`);
+  }
+  const ok = Validate.parseAuditTarget(' 2 ', 3, 5);
+  assert.strictEqual(ok.errors.length, 0);
+  assert.strictEqual(ok.target, 2);
+});
+
+test('复线审计：不存在可保留关系时拒绝审计', () => {
+  const r = Validate.parseAuditTarget('1', 1, 0);
+  assert.strictEqual(r.target, null);
+  assert.ok(r.errors.some((e) => /不存在可保留的干扰关系/.test(e.message)));
+});
+
+test('复线审计：奇环 C5 降至二频段（团下界 0，须经分支定界证明）', () => {
+  const ids = ['V1', 'V2', 'V3', 'V4', 'V5'];
+  const pairs = [['V1', 'V2'], ['V2', 'V3'], ['V3', 'V4'], ['V4', 'V5'], ['V5', 'V1']];
+  const r = DSATUR.auditGraph(ids, pairs, 2);
+  assert.strictEqual(r.removedCount, 1);
+  assert.deepStrictEqual(r.removed, [['V1', 'V5']]);
+  assert.deepStrictEqual(r.bands, [['V1', 'V3', 'V5'], ['V2', 'V4']]);
+  assert.strictEqual(r.lb, 0, 'C5 的互不重叠团下界为 0');
+  assert.ok(r.nodes > 0, '应实际执行受限颜色分支定界搜索');
+  const remaining = pairs.filter(([a, b]) => !(r.bandOf[a] === r.bandOf[b]));
+  assert.strictEqual(DSATUR.verifyAssignment(remaining, r.bandOf).length, 0);
+});
+
+test('复线审计：目标为 1 个频段时解除全部关系', () => {
+  const ids = ['A', 'B', 'C'];
+  const pairs = [['A', 'B'], ['B', 'C']];
+  const r = DSATUR.auditGraph(ids, pairs, 1);
+  assert.strictEqual(r.removedCount, 2);
+  assert.deepStrictEqual(r.removed, [['A', 'B'], ['B', 'C']]);
+  assert.strictEqual(r.kept, 0);
+  assert.deepStrictEqual(r.bands, [['A', 'B', 'C']]);
+});
+
+test('复线审计：随机小图上与暴力最小同频边一致（精确性交叉验证）', () => {
+  const rand = lcg(987654321);
+  let searched = 0;
+  let checked = 0;
+  for (let t = 0; t < 150; t++) {
+    const n = 2 + Math.floor(rand() * 7); // 2..8 个顶点
+    const p = 0.2 + rand() * 0.6;
+    const ids = Array.from({ length: n }, (_, i) => 'V' + (i + 1));
+    const pairs = [];
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (rand() < p) pairs.push([ids[i], ids[j]]);
+      }
+    }
+    if (pairs.length === 0) continue;
+    const chi = DSATUR.solveGraph(ids, pairs).k;
+    if (chi < 2) continue;
+    const k = 1 + Math.floor(rand() * (chi - 1)); // 1..chi-1
+    const r = DSATUR.auditGraph(ids, pairs, k);
+    const idx = new Map(ids.map((id, i) => [id, i]));
+    const expect = bruteMinConflicts(n, pairs.map(([a, b]) => [idx.get(a), idx.get(b)]), k);
+    assert.strictEqual(r.removedCount, expect, `图 ${t} 最少解除数不符：${JSON.stringify({ n, k, pairs })}`);
+    assert.strictEqual(r.removed.length, expect);
+    // 解除关系按端点标识规范排序
+    const sorted = r.removed.map((p) => p.slice()).sort((e1, e2) => (e1[0] !== e2[0] ? (e1[0] < e2[0] ? -1 : 1) : e1[1] < e2[1] ? -1 : e1[1] > e2[1] ? 1 : 0));
+    assert.deepStrictEqual(r.removed, sorted, '解除关系未按端点标识规范排序');
+    // 可复算：解除集恰为同频干扰边，剩余关系无冲突
+    const removedKeys = new Set(r.removed.map((p2) => JSON.stringify(p2)));
+    const remaining = pairs.filter(([a, b]) => !removedKeys.has(JSON.stringify(normPair(a, b))));
+    assert.strictEqual(remaining.length, r.kept);
+    assert.strictEqual(r.kept + r.removedCount, r.total);
+    assert.strictEqual(DSATUR.verifyAssignment(remaining, r.bandOf).length, 0, `图 ${t} 剩余网络存在同频冲突`);
+    const mono = pairs.filter(([a, b]) => r.bandOf[a] === r.bandOf[b]).length;
+    assert.strictEqual(mono, r.removedCount, `图 ${t} 解除集与同频边不一致`);
+    if (r.nodes > 0) searched++;
+    checked++;
+  }
+  assert.ok(checked > 0, '应有样例进入交叉验证');
+  assert.ok(searched > 0, '应有样例实际触发审计分支定界搜索');
+});
+
+test('复线审计：录入重排后解除见证与频段编号保持稳定', () => {
+  const cases = [
+    { ids: ['A', 'B', 'C'], pairs: [['A', 'B'], ['B', 'C'], ['A', 'C']], k: 2 },
+    {
+      ids: ['C1', 'C2', 'C3', 'C4'],
+      pairs: [['C1', 'C2'], ['C1', 'C3'], ['C1', 'C4'], ['C2', 'C3'], ['C2', 'C4'], ['C3', 'C4']],
+      k: 3,
+    },
+    {
+      ids: ['V1', 'V2', 'V3', 'V4', 'V5'],
+      pairs: [['V1', 'V2'], ['V2', 'V3'], ['V3', 'V4'], ['V4', 'V5'], ['V5', 'V1']],
+      k: 2,
+    },
+    {
+      ids: ['CH1', 'CH2', 'CH3', 'CH4', 'CH5', 'CH6'],
+      pairs: [['CH1', 'CH2'], ['CH2', 'CH3'], ['CH1', 'CH3'], ['CH3', 'CH4'], ['CH4', 'CH5'], ['CH5', 'CH6'], ['CH4', 'CH6']],
+      k: 2,
+    },
+  ];
+  const rand = lcg(20260926);
+  for (const c of cases) {
+    const base = DSATUR.auditGraph(c.ids, c.pairs, c.k);
+    for (let t = 0; t < 8; t++) {
+      const [ids2, pairs2] = reorder(c.ids, c.pairs, rand);
+      const r = DSATUR.auditGraph(ids2, pairs2, c.k);
+      assert.strictEqual(r.removedCount, base.removedCount, '重排后最少解除数改变');
+      assert.deepStrictEqual(r.removed, base.removed, '重排后解除关系改变');
+      assert.deepStrictEqual(r.bandOf, base.bandOf, '重排后规范频段编号改变');
+      assert.deepStrictEqual(r.bands, base.bands, '重排后频段清单改变');
+    }
+  }
+});
+
+test('复线审计：求解确定性，同一输入重复审计结论一致', () => {
+  const ids = ['CH1', 'CH2', 'CH3', 'CH4', 'CH5'];
+  const pairs = [['CH1', 'CH2'], ['CH2', 'CH3'], ['CH3', 'CH4'], ['CH4', 'CH5'], ['CH5', 'CH1']];
+  const a = DSATUR.auditGraph(ids, pairs, 2);
+  const b = DSATUR.auditGraph(ids, pairs, 2);
+  assert.deepStrictEqual(a.removed, b.removed);
+  assert.deepStrictEqual(a.bandOf, b.bandOf);
+  assert.strictEqual(a.nodes, b.nodes);
+});
+
+/* ---------- 2c. 页面行为测试：最小 DOM 仿真（复线审计交互与过期任务防护） ---------- */
+
+require('./dom.js')(test);
+
 /* ---------- 3. 构建检查 ---------- */
 
 test('构建检查：关键文件存在、JS 语法有效、页面引用完整', () => {
@@ -310,16 +536,26 @@ test('构建检查：关键文件存在、JS 语法有效、页面引用完整',
   for (const f of files) {
     assert.ok(fs.existsSync(path.join(ROOT, f)), `缺少文件 ${f}`);
   }
-  const jsFiles = ['main.js', 'worker.js', 'dsatur.js', 'validate.js', 'server.js', 'verify/run.js'];
+  const jsFiles = ['main.js', 'worker.js', 'dsatur.js', 'validate.js', 'server.js', 'verify/run.js', 'verify/dom.js'];
   for (const f of jsFiles) {
     execFileSync(process.execPath, ['--check', path.join(ROOT, f)]);
   }
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   assert.ok(html.includes('src="validate.js"') && html.includes('src="main.js"'), 'index.html 脚本引用缺失');
+  assert.ok(
+    html.includes('id="auditPanel"') && html.includes('id="target"') && html.includes('id="removed"'),
+    'index.html 缺少复线审计面板'
+  );
   const mainJs = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
   assert.ok(mainJs.includes("new Worker('worker.js')"), 'main.js 未在 Worker 中求解');
+  assert.ok(mainJs.includes("mode: 'audit'"), 'main.js 未发起复线审计任务');
   const workerJs = fs.readFileSync(path.join(ROOT, 'worker.js'), 'utf8');
   assert.ok(workerJs.includes("importScripts('dsatur.js')"), 'worker.js 未加载求解器');
+  assert.ok(workerJs.includes("msg.mode === 'audit'"), 'worker.js 未处理复线审计任务');
+  const dsaturJs = fs.readFileSync(path.join(ROOT, 'dsatur.js'), 'utf8');
+  assert.ok(dsaturJs.includes('auditGraph') && dsaturJs.includes('exactMinConflicts'), 'dsatur.js 缺少复线审计求解');
+  const validateJs = fs.readFileSync(path.join(ROOT, 'validate.js'), 'utf8');
+  assert.ok(validateJs.includes('parseAuditTarget'), 'validate.js 缺少审计目标校验');
 });
 
 /* ---------- 4. 页面 HTTP 冒烟 ---------- */
@@ -341,11 +577,20 @@ async function fetchWithRetry(url, attempts, delayMs) {
 
 async function smoke() {
   const targets = [
-    ['/', (body) => body.includes('束流诊断柜') && body.includes('id="channels"') && body.includes('id="edges"')],
-    ['/main.js', (body) => body.includes('new Worker')],
-    ['/worker.js', (body) => body.includes('importScripts')],
-    ['/dsatur.js', (body) => body.includes('solveGraph')],
-    ['/validate.js', (body) => body.includes('parseChannels')],
+    [
+      '/',
+      (body) =>
+        body.includes('束流诊断柜') &&
+        body.includes('id="channels"') &&
+        body.includes('id="edges"') &&
+        body.includes('复线审计') &&
+        body.includes('id="auditPanel"') &&
+        body.includes('id="target"'),
+    ],
+    ['/main.js', (body) => body.includes('new Worker') && body.includes('audit')],
+    ['/worker.js', (body) => body.includes('importScripts') && body.includes('audit')],
+    ['/dsatur.js', (body) => body.includes('solveGraph') && body.includes('auditGraph')],
+    ['/validate.js', (body) => body.includes('parseChannels') && body.includes('parseAuditTarget')],
     ['/styles.css', (body) => body.includes('resultPanel')],
     ['/healthz', (body) => body.includes('ok')],
   ];
